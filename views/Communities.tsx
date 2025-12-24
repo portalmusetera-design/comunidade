@@ -1,22 +1,25 @@
 
-import React, { useState, useMemo } from 'react';
-import { COMMUNITIES as INITIAL_COMMUNITIES, POSTS as INITIAL_POSTS, CURRENT_USER } from '../constants';
+import React, { useState, useMemo, useEffect } from 'react';
 import { View, Community, Post } from '../types';
 import Header from '../components/Header';
+import { supabase } from '../supabaseClient';
 
 interface CommunitiesProps {
   onNavigate: (view: View) => void;
+  userProfile: any;
 }
 
 const CATEGORIES = ['Todos', 'Neurologia', 'Autismo', 'Hospitalar', 'Educação'];
 
-const Communities: React.FC<CommunitiesProps> = ({ onNavigate }) => {
+const Communities: React.FC<CommunitiesProps> = ({ onNavigate, userProfile }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeCategory, setActiveCategory] = useState('Todos');
-  const [communities, setCommunities] = useState<Community[]>(INITIAL_COMMUNITIES);
-  const [allPosts, setAllPosts] = useState<Post[]>(INITIAL_POSTS);
-  const [joinedIds, setJoinedIds] = useState<Set<string>>(new Set(['c1']));
+  const [communities, setCommunities] = useState<Community[]>([]);
+  const [allPosts, setAllPosts] = useState<Post[]>([]);
+  const [joinedIds, setJoinedIds] = useState<Set<string>>(new Set());
   const [selectedCommunity, setSelectedCommunity] = useState<Community | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [memberCounts, setMemberCounts] = useState<Record<string, number>>({});
 
   // Modais
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -31,6 +34,65 @@ const Communities: React.FC<CommunitiesProps> = ({ onNavigate }) => {
   const [postImage, setPostImage] = useState('');
   const [isPosting, setIsPosting] = useState(false);
 
+  useEffect(() => {
+    fetchCommunities();
+    fetchMemberships();
+  }, []);
+
+  const fetchCommunities = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('communities')
+        .select('*')
+        .order('name');
+
+      if (error) throw error;
+
+      // Fetch member counts
+      const { data: members, error: membersError } = await supabase
+        .from('community_members')
+        .select('community_id');
+
+      if (membersError) throw membersError;
+
+      const counts: Record<string, number> = {};
+      members.forEach(m => {
+        counts[m.community_id] = (counts[m.community_id] || 0) + 1;
+      });
+
+      setMemberCounts(counts);
+
+      const formatted: Community[] = (data || []).map(c => ({
+        id: c.id,
+        name: c.name,
+        description: c.description || '',
+        members: counts[c.id]?.toString() || '0',
+        image: c.image_url || 'https://picsum.photos/seed/music/400/200',
+        updates: 0
+      }));
+
+      setCommunities(formatted);
+    } catch (err) {
+      console.error('Error fetching communities:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchMemberships = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const { data, error } = await supabase
+      .from('community_members')
+      .select('community_id')
+      .eq('user_id', user.id);
+
+    if (data) {
+      setJoinedIds(new Set(data.map(m => m.community_id)));
+    }
+  };
+
   const filteredCommunities = useMemo(() => {
     return communities.filter(c => {
       const matchesSearch = c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -40,64 +102,147 @@ const Communities: React.FC<CommunitiesProps> = ({ onNavigate }) => {
     });
   }, [searchTerm, communities, activeCategory]);
 
-  const communityPosts = useMemo(() => {
-    if (!selectedCommunity) return [];
-    return allPosts.filter(p => p.community === selectedCommunity.name);
-  }, [selectedCommunity, allPosts]);
+  const fetchCommunityPosts = async (communityName: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select(`
+          *,
+          author:profiles!user_id(name, avatar_url)
+        `)
+        .eq('community', communityName)
+        .order('created_at', { ascending: false });
 
-  const toggleJoin = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newJoined = new Set(joinedIds);
-    if (newJoined.has(id)) {
-      newJoined.delete(id);
-    } else {
-      newJoined.add(id);
+      if (error) throw error;
+
+      const formatted: Post[] = (data || []).map(p => ({
+        id: p.id,
+        author: p.author?.name || 'Membro',
+        authorAvatar: p.author?.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=800&q=80',
+        time: new Date(p.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        content: p.content,
+        image: p.image_url,
+        likes: 0, // In a real app, join with post_likes or fetch them
+        comments: 0
+      }));
+
+      setAllPosts(formatted);
+    } catch (err) {
+      console.error('Error fetching community posts:', err);
     }
-    setJoinedIds(newJoined);
   };
 
-  const handleCreateCommunity = () => {
+  const communityPosts = useMemo(() => {
+    return allPosts; // They are already filtered by the fetch call
+  }, [allPosts]);
+
+  useEffect(() => {
+    if (selectedCommunity) {
+      fetchCommunityPosts(selectedCommunity.name);
+    }
+  }, [selectedCommunity]);
+
+  const toggleJoin = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const isJoined = joinedIds.has(id);
+    const newJoined = new Set(joinedIds);
+
+    try {
+      if (isJoined) {
+        newJoined.delete(id);
+        await supabase
+          .from('community_members')
+          .delete()
+          .match({ community_id: id, user_id: user.id });
+      } else {
+        newJoined.add(id);
+        await supabase
+          .from('community_members')
+          .insert({ community_id: id, user_id: user.id });
+      }
+      setJoinedIds(newJoined);
+      fetchCommunities(); // Refresh member counts
+    } catch (err) {
+      console.error('Error toggling join:', err);
+    }
+  };
+
+  const handleCreateCommunity = async () => {
     if (!newName.trim()) return;
-    const newComm: Community = {
-      id: `c-${Date.now()}`,
-      name: newName,
-      description: newDesc || 'Sem descrição definida.',
-      members: '1',
-      image: `https://picsum.photos/seed/${Date.now()}/400/200`,
-      updates: 0
-    };
-    setCommunities([newComm, ...communities]);
-    setJoinedIds(prev => new Set(prev).add(newComm.id));
-    setNewName('');
-    setNewDesc('');
-    setShowCreateModal(false);
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from('communities')
+        .insert({
+          name: newName,
+          description: newDesc || 'Sem descrição definida.',
+          category: activeCategory !== 'Todos' ? activeCategory : 'Clinica',
+          image_url: `https://picsum.photos/seed/${Date.now()}/400/200`
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Join the community automatically
+      await supabase
+        .from('community_members')
+        .insert({ community_id: data.id, user_id: user.id });
+
+      setNewName('');
+      setNewDesc('');
+      setShowCreateModal(false);
+      fetchCommunities();
+      fetchMemberships();
+    } catch (err) {
+      console.error('Error creating community:', err);
+    }
   };
 
-  const handleCreatePost = () => {
+  const handleCreatePost = async () => {
     if (!postContent.trim() || !selectedCommunity) return;
     setIsPosting(true);
 
-    setTimeout(() => {
-      const newPost: Post = {
-        id: `p-${Date.now()}`,
-        author: CURRENT_USER.name,
-        authorAvatar: CURRENT_USER.avatar,
-        time: 'Agora',
-        content: postContent,
-        image: postImage.trim() || undefined,
-        likes: 0,
-        comments: 0,
-        community: selectedCommunity.name,
-        tags: ['Comunidade']
-      };
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-      setAllPosts([newPost, ...allPosts]);
+      const { error } = await supabase
+        .from('posts')
+        .insert({
+          user_id: user.id,
+          content: postContent,
+          image_url: postImage.trim() || null,
+          community: selectedCommunity.name
+        });
+
+      if (error) throw error;
+
       setPostContent('');
       setPostImage('');
       setIsPosting(false);
       setShowPostModal(false);
-    }, 800);
+      fetchCommunityPosts(selectedCommunity.name);
+    } catch (err) {
+      console.error('Error creating group post:', err);
+      setIsPosting(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col min-h-screen bg-background-dark items-center justify-center">
+        <div className="size-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        <p className="mt-4 text-[10px] font-black text-white/40 uppercase tracking-widest animate-pulse">Carregando Comunidades...</p>
+      </div>
+    );
+  }
 
   // View: Community Detail
   if (selectedCommunity) {

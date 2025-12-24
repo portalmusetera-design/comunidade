@@ -48,7 +48,7 @@ const App: React.FC = () => {
   const renderView = () => {
     switch (currentView) {
       case 'FEED': return <Feed onNavigate={setCurrentView} userProfile={userProfile} />;
-      case 'COMMUNITIES': return <Communities onNavigate={setCurrentView} />;
+      case 'COMMUNITIES': return <Communities onNavigate={setCurrentView} userProfile={userProfile} />;
       case 'ALERTS': return <Alerts onNavigate={setCurrentView} />;
       case 'PROFILE': return <Profile onNavigate={setCurrentView} onProfileUpdate={() => session && fetchProfile(session.user.id)} />;
       case 'CHAT': return <ChatList onNavigate={setCurrentView} />;
