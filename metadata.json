@@ -1,0 +1,8 @@
+{
+  "name": "Copy of Comunidade MuseTera",
+  "description": "Uma rede social profissional para musicoterapeutas compartilharem técnicas, casos clínicos e organizarem eventos, com um toque nostálgico e funcionalidades modernas.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
