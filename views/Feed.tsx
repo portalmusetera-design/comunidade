@@ -288,6 +288,21 @@ const Feed: React.FC<FeedProps> = ({ onNavigate, userProfile }) => {
           .from('post_likes')
           .insert({ post_id: postId, user_id: authUser.id });
 
+        const { data: postAuthor } = await supabase
+          .from('posts')
+          .select('user_id')
+          .eq('id', postId)
+          .single();
+
+        if (postAuthor && postAuthor.user_id !== authUser.id) {
+          await supabase.from('notifications').insert({
+            user_id: postAuthor.user_id,
+            actor_id: authUser.id,
+            type: 'LIKE',
+            message: 'curtiu seu post',
+            related_id: postId
+          });
+        }
         setPosts(posts.map(p => p.id === postId ? { ...p, likes: p.likes + 1 } : p));
       }
       setLikedPosts(newLikedPosts);
@@ -344,6 +359,22 @@ const Feed: React.FC<FeedProps> = ({ onNavigate, userProfile }) => {
         });
 
       if (error) throw error;
+
+      const { data: postAuthor } = await supabase
+        .from('posts')
+        .select('user_id')
+        .eq('id', postId)
+        .single();
+
+      if (postAuthor && postAuthor.user_id !== authUser.id) {
+        await supabase.from('notifications').insert({
+          user_id: postAuthor.user_id,
+          actor_id: authUser.id,
+          type: 'COMMENT',
+          message: 'comentou no seu post',
+          related_id: postId
+        });
+      }
 
       setNewComment(prev => ({ ...prev, [postId]: "" }));
       fetchComments(postId);

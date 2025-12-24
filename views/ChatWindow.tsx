@@ -79,6 +79,16 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ chat, onBack }) => {
                 });
 
             if (error) throw error;
+
+            // Notify other participant
+            await supabase.from('notifications').insert({
+                user_id: otherParticipant.user_id,
+                actor_id: user.id,
+                type: 'MESSAGE',
+                message: 'enviou uma nova mensagem para você',
+                related_id: chat.id
+            });
+
             setNewMessage('');
         } catch (err) {
             console.error('Error sending message:', err);
