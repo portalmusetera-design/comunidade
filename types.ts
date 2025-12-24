@@ -66,3 +66,23 @@ export interface Story {
   image: string;
   viewed: boolean;
 }
+
+export interface Chat {
+  id: string;
+  participants: {
+    user_id: string;
+    name: string;
+    avatar_url: string;
+  }[];
+  lastMessage?: string;
+  lastMessageTime?: string;
+  unreadCount?: number;
+}
+
+export interface Message {
+  id: string;
+  chat_id: string;
+  sender_id: string;
+  content: string;
+  created_at: string;
+}
